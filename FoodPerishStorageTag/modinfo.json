@@ -1,12 +1,12 @@
 {
     "$schema": "https://moddbcdn.vintagestory.at/schema/modinfo.latest.json",
     "type": "Code",
-    "modid": "foodperishstoragetag",
-    "name": "FoodPerishStorageTag",
+    "modid": "NoOfflineContainerFoodSpoil",
+    "name": "NoOfflineContainerFoodSpoil",
     "authors": [
         "Draconikard"
     ],
-    "description": "To be added",
+    "description": "A mod that uses a player tagging system to stop food in containers owned by offline players from spoiling.",
     "version": "1.0.0",
     "dependencies": {
         "game": "1.21.0"
