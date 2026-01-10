@@ -1,5 +1,7 @@
 ﻿using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Vintagestory.API.Common;
 using Vintagestory.API.Datastructures;
 using Vintagestory.API.Server;
@@ -55,6 +57,7 @@ namespace NoOfflineContainerFoodSpoil
                 if (blockentity is BlockEntityContainer && blockentity.GetBehavior<BEBehaviorOfflinePreserve>() is BEBehaviorOfflinePreserve behavior)
                 {
                     behavior.OwnerUID = player.PlayerUID;
+                    behavior.LastChunkLoadTime = api.World.Calendar.TotalHours;
 
                     Mod.Logger.Notification($"Owner set to {player.PlayerName} <{player.PlayerUID}> at {sel.Position}");
 
@@ -101,19 +104,24 @@ namespace NoOfflineContainerFoodSpoil
         {
             public string? OwnerUID;
             public string? LastUserUID;
+            public double? LastUserLoginTime;
             public double LastChunkLoadTime;
             public BEBehaviorOfflinePreserve(BlockEntity entity) : base(entity) { }
 
-            // Updates the block's last user if it doesn't equal the owner. This is called by the Block BehaviorPreserverWatcher.
+            // Updates the block's last user if it doesn't equal the owner, as well as tracks their login time. This is called by the Block BehaviorPreserverWatcher.
             public void UpdateLastUser(IPlayer player)
             {
-                if (LastUserUID != player.PlayerUID)
+                if (PlayerSessionStart.TryGetValue(player.PlayerUID, out double currentLoginTime))
                 {
-                    LastUserUID = player.PlayerUID;
+                    if (LastUserUID != player.PlayerUID || LastUserLoginTime != currentLoginTime)
+                    {
+                        LastUserUID = player.PlayerUID;
+                        LastUserLoginTime = currentLoginTime;
 
-                    Api.Logger.Notification($"Last User updated to {player.PlayerName} <{player.PlayerUID}> at {Blockentity.Pos}");
+                        Api.Logger.Notification($"Last User updated to {player.PlayerName} <{player.PlayerUID}> at {Blockentity.Pos}");
 
-                    Blockentity.MarkDirty();
+                        Blockentity.MarkDirty();
+                    }
                 }
             }
 
@@ -126,21 +134,34 @@ namespace NoOfflineContainerFoodSpoil
                 {
                     container.Inventory.OnAcquireTransitionSpeed += (transType, stack, baseMul) => // This event is called when a container is loaded into a chunk.
                     {
-                        if (api.Side == EnumAppSide.Client) return baseMul; // Doesn't do anything if this is being called by a client.
+                        if (api.Side == EnumAppSide.Client) return baseMul;
 
-                        string? targetUid = LastUserUID ?? OwnerUID;
+                        string? effectiveUser = OwnerUID; // Default to Owner
 
-                        if (targetUid == null || !IsPlayerActive(api, targetUid)) return 0f; // Checks if owner is active via IsPlayerActive method.
-
-                        if (PlayerSessionStart.TryGetValue(targetUid, out double sessionStart))
+                        if (LastUserUID != null && PlayerSessionStart.TryGetValue(LastUserUID, out double lastUserCurrentSession)) // Check if last user is online and in same session.
                         {
-                            if (sessionStart > LastChunkLoadTime)
+                            if (System.Math.Abs(lastUserCurrentSession - (LastUserLoginTime ?? 0)) < 0.001)
                             {
-                                return 0f; // Returns spoilage value of 0 if owner loads into unloaded chunk
+                                effectiveUser = LastUserUID; // If so, overwrite effectiveUser with lastUser.
                             }
                         }
 
-                        return baseMul;
+                        // Stop spoilage if effectiveUser is active
+                        if (effectiveUser == null || !IsPlayerActive(api, effectiveUser))
+                        {
+                            return 0f;
+                        }
+
+                        // Chunk load protection, checks to see if effectiveUser logged in after the chunk loaded and if so stops spoilage.
+                        if (PlayerSessionStart.TryGetValue(effectiveUser, out double sessionStart))
+                        {
+                            if (sessionStart > LastChunkLoadTime)
+                            {
+                                return 0f;
+                            }
+                        }
+
+                        return baseMul; // If effectiveUser is online, allow spoilage.
                     };
                 }
             }
@@ -160,6 +181,7 @@ namespace NoOfflineContainerFoodSpoil
                 base.ToTreeAttributes(tree); // Tacks on existing behavior.
                 if (OwnerUID != null) { tree.SetString("uid", OwnerUID); }
                 if (LastUserUID != null) { tree.SetString("lastUserUid", LastUserUID); }
+                if (LastUserLoginTime != null) { tree.SetDouble("lastUserLoginTime", (double)LastUserLoginTime); }
 
                 tree.SetDouble("lastSaveTime", Api.World.Calendar.TotalHours);
             }
@@ -170,7 +192,7 @@ namespace NoOfflineContainerFoodSpoil
                 base.FromTreeAttributes(tree, worldAccessForResolve); // Tacks on existing behavior.
                 OwnerUID = tree.GetString("uid");
                 LastUserUID = tree.GetString("lastUserUid");
-
+                LastUserLoginTime = tree.GetDouble("lastUserLoginTime"); // Load session
                 LastChunkLoadTime = tree.GetDouble("lastSaveTime");
             }
         }
