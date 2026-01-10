@@ -132,45 +132,39 @@ namespace NoOfflineContainerFoodSpoil
                 {
                     container.Inventory.OnAcquireTransitionSpeed += (transType, stack, baseMul) => // This event is called when a container is loaded into a chunk.
                     {
-                        if (api.Side == EnumAppSide.Client) return baseMul;
+                        string? effectiveUser = OwnerUID; // Default to Owner.
 
-                        string? effectiveUser = OwnerUID; // Default to Owner
-
-                        if (LastUserUID != null && PlayerSessionStart.TryGetValue(LastUserUID, out double lastUserCurrentSession)) // Check if last user is online and in same session.
+                        if (LastUserUID != null)
                         {
-                            if (System.Math.Abs(lastUserCurrentSession - (LastUserLoginTime ?? 0)) < 0.001)
+                            if (api.Side == EnumAppSide.Server) // Server time check.
                             {
-                                effectiveUser = LastUserUID; // If so, overwrite effectiveUser with lastUser.
+                                if (NoOfflineContainerFoodSpoilModSystem.PlayerSessionStart.TryGetValue(LastUserUID, out double lastSession))
+                                {
+                                    if (System.Math.Abs(lastSession - (LastUserLoginTime ?? 0)) < 0.001)
+                                    {
+                                        effectiveUser = LastUserUID;
+                                    }
+                                }
+                            }
+                            else // Client check.
+                            {
+                                effectiveUser = LastUserUID;
                             }
                         }
 
-                        // Stop spoilage if effectiveUser is active
-                        if (effectiveUser == null || !IsPlayerActive(api, effectiveUser))
+                        if (effectiveUser == null || api.World.PlayerByUid(effectiveUser) == null) // Offline check.
                         {
                             return 0f;
                         }
 
-                        // Chunk load protection, checks to see if effectiveUser logged in after the chunk loaded and if so stops spoilage.
-                        if (PlayerSessionStart.TryGetValue(effectiveUser, out double sessionStart))
+                        if (api.Side == EnumAppSide.Server && PlayerSessionStart.TryGetValue(effectiveUser, out double sessionStart)) // Catch up protection.
                         {
-                            if (sessionStart > LastChunkLoadTime)
-                            {
-                                return 0f;
-                            }
+                            if (sessionStart > LastChunkLoadTime) return 0f;
                         }
 
-                        return baseMul; // If effectiveUser is online, allow spoilage.
+                        return baseMul;
                     };
                 }
-            }
-
-            // Checks to see if a player is online via uid.
-            private bool IsPlayerActive(ICoreAPI api, string? uid)
-            {
-                if (uid == null) return false;
-                if (api.World.PlayerByUid(uid) == null) return false;
-                if (!PlayerSessionStart.ContainsKey(uid)) return false;
-                return true;
             }
 
             // Saves owner and last user of container blocks to disk. This is called automatically by the game engine.
