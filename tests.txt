@@ -1,0 +1,9 @@
+Conditions to test:
+1. Player joins chunk, creates chest in chunk and puts food in, leaves. Second player resides in chunk.
+2. Player joins chunk, creates chest in chunk and puts food in, leaves. Second player is outside of chunk.
+3. Player joins chunk, creates chest in chunk, and leaves chunk. Second player is outside of chunk. Player leaves, then re-joins server and walks back to chest.
+4. Player joins chunk, creates chest in chunk and puts food in. Leaves server. Time passes. Server restarts. Player rejoins server.
+5. Player joins chunk, creates chest in chunk, and puts food in. Leaves server. Second player interacts with chunk. Second player leaves. Time passes.
+6. Player joins chunk, creates chest. Second player destroys chest, and places a new one in the same spot. Second player puts food in, and leaves. Time passes.
+
+More edge cases to be added...
