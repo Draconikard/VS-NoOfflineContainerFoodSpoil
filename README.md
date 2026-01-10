@@ -1,3 +1,5 @@
+![Mod Logo](https://moddbcdn.vintagestory.at/ModDB+Card_99e77500822135694d92d8a6b1d47262.png)
+
 # No Offline Container Food Spoil
 
 ### $\color{#FF0000}\text{DISCLAIMER}$
