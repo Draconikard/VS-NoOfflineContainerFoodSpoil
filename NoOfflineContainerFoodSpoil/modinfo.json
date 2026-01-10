@@ -7,7 +7,7 @@
         "Draconikard"
     ],
     "description": "A mod that uses a player tagging system to stop food in containers owned by offline players from spoiling.",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "dependencies": {
         "game": "1.21.0"
     }
