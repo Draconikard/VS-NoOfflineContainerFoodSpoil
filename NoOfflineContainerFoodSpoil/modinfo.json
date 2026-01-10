@@ -1,7 +1,7 @@
 {
     "$schema": "https://moddbcdn.vintagestory.at/schema/modinfo.latest.json",
     "type": "Code",
-    "modid": "NoOfflineContainerFoodSpoil",
+    "modid": "noofflinecontainerfoodspoil",
     "name": "NoOfflineContainerFoodSpoil",
     "authors": [
         "Draconikard"
