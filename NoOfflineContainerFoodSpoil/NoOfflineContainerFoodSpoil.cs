@@ -29,12 +29,11 @@ namespace NoOfflineContainerFoodSpoil
                 if (block.GetBehavior<BlockBehaviorContainer>() != null &&
                     !block.HasBehavior<BlockBehaviorPreserveWatcher>())
                 {
-                    // Prepends instead of appends to avoid having data overwritten.
-                    block.BlockEntityBehaviors = block.BlockEntityBehaviors
+                    block.BlockEntityBehaviors = (block.BlockEntityBehaviors ?? System.Array.Empty<BlockEntityBehaviorType>())
                         .Prepend(new BlockEntityBehaviorType { Name = "OfflinePreserve", properties = null })
                         .ToArray();
 
-                    block.BlockBehaviors = block.BlockBehaviors
+                    block.BlockBehaviors = (block.BlockBehaviors ?? System.Array.Empty<BlockBehavior>())
                         .Prepend(new BlockBehaviorPreserveWatcher(block))
                         .ToArray();
                 }
@@ -44,6 +43,15 @@ namespace NoOfflineContainerFoodSpoil
         // Server-only logic
         public override void StartServerSide(ICoreServerAPI api)
         {
+            // Add existing players
+            foreach (var player in api.World.AllOnlinePlayers)
+            {
+                if (player.PlayerUID != null)
+                {
+                    PlayerSessionStart[player.PlayerUID] = api.World.Calendar.TotalHours;
+                }
+            }
+
             // Updates PlayerSessionStart dictionary initialized earlier
             api.Event.PlayerJoin += player => PlayerSessionStart[player.PlayerUID] = api.World.Calendar.TotalHours;
             api.Event.PlayerDisconnect += player => PlayerSessionStart.Remove(player.PlayerUID);
@@ -171,21 +179,40 @@ namespace NoOfflineContainerFoodSpoil
             public override void ToTreeAttributes(ITreeAttribute tree)
             {
                 base.ToTreeAttributes(tree); // Tacks on existing behavior.
+
                 if (OwnerUID != null) { tree.SetString("uid", OwnerUID); }
                 if (LastUserUID != null) { tree.SetString("lastUserUid", LastUserUID); }
                 if (LastUserLoginTime != null) { tree.SetDouble("lastUserLoginTime", (double)LastUserLoginTime); }
 
-                tree.SetDouble("lastSaveTime", Api.World.Calendar.TotalHours);
+                if (Blockentity?.Api?.World?.Calendar != null)
+                {
+                    tree.SetDouble("lastSaveTime", Blockentity.Api.World.Calendar.TotalHours);
+
+                    LastChunkLoadTime = Blockentity.Api.World.Calendar.TotalHours;
+                }
+                else
+                {
+                    tree.SetDouble("lastSaveTime", LastChunkLoadTime);
+                }
+
             }
 
             // Fetches owner and last user of conatiner blocks to disk when a chunk is loaded.
             public override void FromTreeAttributes(ITreeAttribute tree, IWorldAccessor worldAccessForResolve)
             {
                 base.FromTreeAttributes(tree, worldAccessForResolve); // Tacks on existing behavior.
-                OwnerUID = tree.GetString("uid");
-                LastUserUID = tree.GetString("lastUserUid");
-                LastUserLoginTime = tree.GetDouble("lastUserLoginTime"); // Load session
-                LastChunkLoadTime = tree.GetDouble("lastSaveTime");
+
+                try
+                {
+                    OwnerUID = tree.GetString("uid");
+                    LastUserUID = tree.GetString("lastUserUid");
+                    LastUserLoginTime = tree.GetDouble("lastUserLoginTime"); // Load session
+                    LastChunkLoadTime = tree.GetDouble("lastSaveTime");
+                }
+                catch (System.Exception e)
+                {
+                    Api.Logger.Error($"Failed to load OfflinePreserve data at {Blockentity.Pos}. Inventory save. Error: {e.Message}");
+                }
             }
         }
     }
