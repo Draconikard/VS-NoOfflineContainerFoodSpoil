@@ -26,8 +26,14 @@ namespace NoOfflineContainerFoodSpoil
             {
                 if (block.Code == null) continue;
 
-                if (block.GetBehavior<BlockBehaviorContainer>() != null &&
-                    !block.HasBehavior<BlockBehaviorPreserveWatcher>())
+                bool isContainer = false;
+                if (!string.IsNullOrEmpty(block.EntityClass))
+                {
+                    System.Type entityType = api.ClassRegistry.GetBlockEntity(block.EntityClass);
+                    isContainer = entityType != null && typeof(IBlockEntityContainer).IsAssignableFrom(entityType);
+                }
+
+                if (isContainer && !block.HasBehavior<BlockBehaviorPreserveWatcher>())
                 {
                     block.BlockEntityBehaviors = (block.BlockEntityBehaviors ?? System.Array.Empty<BlockEntityBehaviorType>())
                         .Prepend(new BlockEntityBehaviorType { Name = "OfflinePreserve", properties = null })
