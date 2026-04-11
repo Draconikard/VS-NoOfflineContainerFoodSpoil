@@ -1,223 +1,267 @@
-﻿using System.Collections.Generic;
+﻿using Newtonsoft.Json;
+using System;
+using System.ComponentModel;
 using System.Linq;
 using Vintagestory.API.Common;
 using Vintagestory.API.Datastructures;
 using Vintagestory.API.Server;
+using Vintagestory.API.Util;
 using Vintagestory.GameContent;
 
 namespace NoOfflineContainerFoodSpoil
 {
     public class NoOfflineContainerFoodSpoilModSystem : ModSystem
     {
-        // Attendance sheet for the server. Tracks what time players logged into the server.
-        public static Dictionary<string, double> PlayerSessionStart  = new Dictionary<string, double>();
+        // Data transfer object to hold offline hours and last time to logout
+        public class OfflineHours
+        {
+            [JsonProperty("total_offline_hours")]
+            public double TotalOfflineHours;
+            [JsonProperty("last_logout_timestamp")]
+            public double LastLogoutTimestamp;
+        }
 
-        // Registers two behaviors on the Client and Server
+        // Register the BEBehaviorOfflinePreserve behavior
         public override void Start(ICoreAPI api)
         {
-            api.RegisterBlockEntityBehaviorClass("OfflinePreserve", typeof(BEBehaviorOfflinePreserve));
-            api.RegisterBlockBehaviorClass("OfflinePreserveWatcher", typeof(BlockBehaviorPreserveWatcher));
+            base.Start(api);
+
+            api.RegisterBlockEntityBehaviorClass("OfflinePreserve", typeof(BlockEntityBehaviorOfflinePreserve));
         }
 
-        // Attaches the registered behaviors to all "Container" blocks.
-        public override void AssetsFinalize(ICoreAPI api)
-        {
-            foreach (var block in api.World.Blocks)
-            {
-                if (block.Code == null) continue;
-
-                bool isContainer = false;
-                if (!string.IsNullOrEmpty(block.EntityClass))
-                {
-                    System.Type entityType = api.ClassRegistry.GetBlockEntity(block.EntityClass);
-                    isContainer = entityType != null && typeof(IBlockEntityContainer).IsAssignableFrom(entityType);
-                }
-
-                if (isContainer && !block.HasBehavior<BlockBehaviorPreserveWatcher>())
-                {
-                    block.BlockEntityBehaviors = (block.BlockEntityBehaviors ?? System.Array.Empty<BlockEntityBehaviorType>())
-                        .Prepend(new BlockEntityBehaviorType { Name = "OfflinePreserve", properties = null })
-                        .ToArray();
-
-                    block.BlockBehaviors = (block.BlockBehaviors ?? System.Array.Empty<BlockBehavior>())
-                        .Prepend(new BlockBehaviorPreserveWatcher(block))
-                        .ToArray();
-                }
-            }
-        }
-
-        // Server-only logic
         public override void StartServerSide(ICoreServerAPI api)
         {
-            // Add existing players
-            foreach (var player in api.World.AllOnlinePlayers)
+            base.StartServerSide(api);
+
+            // Set ownership of a container when placed
+            api.Event.DidPlaceBlock += (player, oldId, blockSel, stack) =>
             {
-                if (player.PlayerUID != null)
+                var blockEntity = api.World.BlockAccessor.GetBlockEntity(blockSel.Position);
+                var blockEntityBehavior = blockEntity?.GetBehavior<BlockEntityBehaviorOfflinePreserve>();
+
+                if (blockEntityBehavior != null && blockEntity != null)
                 {
-                    PlayerSessionStart[player.PlayerUID] = api.World.Calendar.TotalHours;
-                }
-            }
+                    blockEntityBehavior.OwnerUID = player.PlayerUID;
 
-            // Updates PlayerSessionStart dictionary initialized earlier
-            api.Event.PlayerJoin += player => PlayerSessionStart[player.PlayerUID] = api.World.Calendar.TotalHours;
-            api.Event.PlayerDisconnect += player => PlayerSessionStart.Remove(player.PlayerUID);
+                    player.ServerData.CustomPlayerData.TryGetValue("NoOfflineFoodSpoil", out string? json);
+                    OfflineHours data;
+                    try
+                    {
+                        if (string.IsNullOrEmpty(json)) data = new OfflineHours();
+                        else data = JsonConvert.DeserializeObject<OfflineHours>(json) ?? new OfflineHours();
+                    }
+                    catch (Exception ex)
+                    {
+                        api.Logger.Error($"[NoOfflineFoodSpoil] Failed to deserialize offline hours for player. Resetting to 0. Error: {ex.Message}");
+                        data = new OfflineHours();
+                    }
+                    blockEntityBehavior.LastKnownOwnerOfflineHours = data.TotalOfflineHours;
 
-            // Container blocks placed by players have themselves assigned as their owner.
-            api.Event.DidPlaceBlock += (player, oldId, sel, stack) => {
-                var blockentity = player.Entity.World.BlockAccessor.GetBlockEntity(sel.Position);
-
-                if (blockentity is BlockEntityContainer && blockentity.GetBehavior<BEBehaviorOfflinePreserve>() is BEBehaviorOfflinePreserve behavior)
-                {
-                    behavior.OwnerUID = player.PlayerUID;
-                    behavior.LastChunkLoadTime = api.World.Calendar.TotalHours;
-
-                    Mod.Logger.Notification($"Owner set to {player.PlayerName} <{player.PlayerUID}> at {sel.Position}");
-
-                    blockentity.MarkDirty(); // Saves information to disk.
+                    Mod.Logger.Notification($"Container block placed at {blockEntity?.Pos}. Owner set to {player.PlayerName} <{player.PlayerUID}>.");
+                    blockEntity?.MarkDirty(true);
                 }
             };
 
-            // Auditing log that announces when a player breaks a container block that was not owned by them.
-            api.Event.BreakBlock += (IServerPlayer player, BlockSelection blockSel, ref float dropMul, ref EnumHandling handling) =>
+            // Log changes to user's total offline hours
+            api.Event.PlayerJoin += byPlayer =>
             {
-                var blockentity = api.World.BlockAccessor.GetBlockEntity(blockSel.Position);
+                var playerOfflineHoursData = byPlayer.ServerData.CustomPlayerData;
+                string modKey = "NoOfflineFoodSpoil";
 
-                if (blockentity?.GetBehavior<BEBehaviorOfflinePreserve>() is BEBehaviorOfflinePreserve behavior)
-                {
-                    if (!string.IsNullOrEmpty(behavior.OwnerUID) && behavior.OwnerUID != player.PlayerUID)
-                    {
-                        Mod.Logger.Audit($"Player {player.PlayerName} <{player.PlayerUID}> has broken a container block that was owned by player {api.PlayerData.GetPlayerDataByUid(behavior.OwnerUID).LastKnownPlayername} <{behavior.OwnerUID}> at {behavior.Pos}");
-                    }
-                }
-            };
-        }
+                playerOfflineHoursData.TryGetValue(modKey, out string? json);
 
-        // Custom BlockBehavior Class that watches container blocks to track who last interacted with them.
-        public class BlockBehaviorPreserveWatcher : BlockBehavior
-        {
-            public BlockBehaviorPreserveWatcher(Block block) : base(block) { } // Initialization
-
-            public override bool OnBlockInteractStart(IWorldAccessor world, IPlayer byPlayer, BlockSelection blockSel, ref EnumHandling handling)
-            {
-                var blockentity = world.BlockAccessor.GetBlockEntity(blockSel.Position);
-                var behavior = blockentity?.GetBehavior<BEBehaviorOfflinePreserve>();
-
-                if (behavior != null)
-                {
-                    behavior.UpdateLastUser(byPlayer);
-                }
-
-                return base.OnBlockInteractStart(world, byPlayer, blockSel, ref handling);
-            }
-        }
-
-        // Custom BlockEntityBehavior that updates database with last user and owner, as well as prevents spoilage if the owner of the container is offline.
-        public class BEBehaviorOfflinePreserve : BlockEntityBehavior
-        {
-            public string? OwnerUID;
-            public string? LastUserUID;
-            public double? LastUserLoginTime;
-            public double LastChunkLoadTime;
-            public BEBehaviorOfflinePreserve(BlockEntity entity) : base(entity) { }
-
-            // Updates the block's last user if it doesn't equal the owner, as well as tracks their login time. This is called by the Block BehaviorPreserverWatcher.
-            public void UpdateLastUser(IPlayer player)
-            {
-                if (PlayerSessionStart.TryGetValue(player.PlayerUID, out double currentLoginTime))
-                {
-                    if (LastUserUID != player.PlayerUID || LastUserLoginTime != currentLoginTime)
-                    {
-                        LastUserUID = player.PlayerUID;
-                        LastUserLoginTime = currentLoginTime;
-
-                        Api.Logger.Notification($"Last User updated to {player.PlayerName} <{player.PlayerUID}> at {Blockentity.Pos}");
-
-                        Blockentity.MarkDirty();
-                    }
-                }
-            }
-
-            // Override the blocks Initialize method to perform spoilage prevention logic
-            public override void Initialize(ICoreAPI api, JsonObject properties)
-            {
-                base.Initialize(api, properties); // Tacks on Initialize's existing behavior first.
-
-                if (Blockentity is BlockEntityContainer container)
-                {
-                    container.Inventory.OnAcquireTransitionSpeed += (transType, stack, baseMul) => // This event is called when a container is loaded into a chunk.
-                    {
-                        string? effectiveUser = OwnerUID; // Default to Owner.
-
-                        if (LastUserUID != null)
-                        {
-                            if (api.Side == EnumAppSide.Server) // Server time check.
-                            {
-                                if (NoOfflineContainerFoodSpoilModSystem.PlayerSessionStart.TryGetValue(LastUserUID, out double lastSession))
-                                {
-                                    if (System.Math.Abs(lastSession - (LastUserLoginTime ?? 0)) < 0.001)
-                                    {
-                                        effectiveUser = LastUserUID;
-                                    }
-                                }
-                            }
-                            else // Client check.
-                            {
-                                effectiveUser = LastUserUID;
-                            }
-                        }
-
-                        if (effectiveUser == null || api.World.PlayerByUid(effectiveUser) == null) // Offline check.
-                        {
-                            return 0f;
-                        }
-
-                        if (api.Side == EnumAppSide.Server && PlayerSessionStart.TryGetValue(effectiveUser, out double sessionStart)) // Catch up protection.
-                        {
-                            if (sessionStart > LastChunkLoadTime) return 0f;
-                        }
-
-                        return baseMul;
-                    };
-                }
-            }
-
-            // Saves owner and last user of container blocks to disk. This is called automatically by the game engine.
-            public override void ToTreeAttributes(ITreeAttribute tree)
-            {
-                base.ToTreeAttributes(tree); // Tacks on existing behavior.
-
-                if (OwnerUID != null) { tree.SetString("uid", OwnerUID); }
-                if (LastUserUID != null) { tree.SetString("lastUserUid", LastUserUID); }
-                if (LastUserLoginTime != null) { tree.SetDouble("lastUserLoginTime", (double)LastUserLoginTime); }
-
-                if (Blockentity?.Api?.World?.Calendar != null)
-                {
-                    tree.SetDouble("lastSaveTime", Blockentity.Api.World.Calendar.TotalHours);
-
-                    LastChunkLoadTime = Blockentity.Api.World.Calendar.TotalHours;
-                }
-                else
-                {
-                    tree.SetDouble("lastSaveTime", LastChunkLoadTime);
-                }
-
-            }
-
-            // Fetches owner and last user of conatiner blocks to disk when a chunk is loaded.
-            public override void FromTreeAttributes(ITreeAttribute tree, IWorldAccessor worldAccessForResolve)
-            {
-                base.FromTreeAttributes(tree, worldAccessForResolve); // Tacks on existing behavior.
-
+                OfflineHours data;
                 try
                 {
-                    OwnerUID = tree.GetString("uid");
-                    LastUserUID = tree.GetString("lastUserUid");
-                    LastUserLoginTime = tree.GetDouble("lastUserLoginTime"); // Load session
-                    LastChunkLoadTime = tree.GetDouble("lastSaveTime");
+                    if (string.IsNullOrEmpty(json)) data = new OfflineHours();
+                    else data = JsonConvert.DeserializeObject<OfflineHours>(json) ?? new OfflineHours();
                 }
-                catch (System.Exception e)
+                catch (Exception ex)
                 {
-                    Api.Logger.Error($"Failed to load OfflinePreserve data at {Blockentity.Pos}. Inventory save. Error: {e.Message}");
+                    api.Logger.Error($"[NoOfflineFoodSpoil] Failed to deserialize offline hours for player. Resetting to 0. Error: {ex.Message}");
+                    data = new OfflineHours();
+                }
+
+                if (data.LastLogoutTimestamp > 0)
+                {
+                    double sessionOfflineDuration = Math.Max(0, api.World.Calendar.TotalHours - data.LastLogoutTimestamp);
+                    data.TotalOfflineHours += sessionOfflineDuration;
+                    data.LastLogoutTimestamp = 0;
+                }
+
+                playerOfflineHoursData[modKey] = JsonConvert.SerializeObject(data);
+                Mod.Logger.Notification($"[OfflinePreserve] {byPlayer.PlayerName} connected. LastLogout: {data.LastLogoutTimestamp}, TotalOffline: {data.TotalOfflineHours}");
+            };
+
+            api.Event.PlayerDisconnect += byPlayer =>
+            {
+                var playerOfflineHoursData = byPlayer.ServerData.CustomPlayerData;
+                string modKey = "NoOfflineFoodSpoil";
+
+                playerOfflineHoursData.TryGetValue(modKey, out string? json);
+
+                OfflineHours data;
+                try
+                {
+                    if (string.IsNullOrEmpty(json)) data = new OfflineHours();
+                    else data = JsonConvert.DeserializeObject<OfflineHours>(json) ?? new OfflineHours();
+                }
+                catch (Exception ex)
+                {
+                    api.Logger.Error($"[NoOfflineFoodSpoil] Failed to deserialize offline hours for player. Resetting to 0. Error: {ex.Message}");
+                    data = new OfflineHours();
+                }
+
+                data.LastLogoutTimestamp = api.World.Calendar.TotalHours;
+                playerOfflineHoursData[modKey] = JsonConvert.SerializeObject(data);
+                Mod.Logger.Notification($"[OfflinePreserve] {byPlayer.PlayerName} disconnected. LastLogout: {data.LastLogoutTimestamp}, TotalOffline: {data.TotalOfflineHours}");
+            };
+        }
+
+        // Add BlockEntityBehaviorOfflinePreserver behavior to container blocks
+        public override void AssetsFinalize(ICoreAPI api)
+        {
+            base.AssetsFinalize(api);
+
+            foreach (var block in api.World.Blocks) 
+            {
+                if (block.Code == null || block.EntityClass == null) continue;
+
+                System.Type entityType = api.ClassRegistry.GetBlockEntity(block.EntityClass);
+
+                bool isContainer = entityType != null && typeof(IBlockEntityContainer).IsAssignableFrom(entityType);
+
+                if (!isContainer) continue;
+
+                block.BlockEntityBehaviors = block.BlockEntityBehaviors.Append(new BlockEntityBehaviorType() { Name = "OfflinePreserve" }).ToArray();
+            }
+        }
+
+        // Behavior assigned to container blocks
+        public class BlockEntityBehaviorOfflinePreserve(BlockEntity b) : BlockEntityBehavior(b)
+        {
+            // Saving OwnerUID to container's attributes
+            public string? OwnerUID;
+            public double LastKnownOwnerOfflineHours;
+            public override void ToTreeAttributes(ITreeAttribute tree)
+            {
+                base.ToTreeAttributes(tree);
+                if (OwnerUID != null) tree.SetString("OwnerUID", OwnerUID);
+                tree.SetDouble("LastKnownOwnerOfflineHours", LastKnownOwnerOfflineHours);
+            }
+            public override void FromTreeAttributes(ITreeAttribute tree, IWorldAccessor worldAccessor)
+            {
+                base.FromTreeAttributes(tree, worldAccessor);
+                OwnerUID = tree.GetString("OwnerUID");
+                LastKnownOwnerOfflineHours = tree.GetDouble("LastKnownOwnerOfflineHours");
+            }
+
+            public override void Initialize(ICoreAPI api, JsonObject properties)
+            {
+                base.Initialize(api, properties);
+
+                if (b is BlockEntityContainer container)
+                {
+                    container.Inventory.OnAcquireTransitionSpeed -= OnAcquireTransitionSpeed;
+                    container.Inventory.OnAcquireTransitionSpeed += OnAcquireTransitionSpeed;
+
+                    api.Logger.Notification($"Initialize has been called on {container.Block.Code}");
+
+                    if (api.Side == EnumAppSide.Server)
+                    {
+                        ICoreServerAPI? castedAPI = api as ICoreServerAPI;
+                        if (castedAPI == null) return;
+                        if (OwnerUID == null) return;
+
+                        var ownerProfile = castedAPI.PlayerData.GetPlayerDataByUid(OwnerUID);
+                        if (ownerProfile == null) return;
+
+                        // Extract offlineHours from Owner's profile
+                        var playerOfflineHoursData = ownerProfile.CustomPlayerData;
+                        string modKey = "NoOfflineFoodSpoil";
+                        playerOfflineHoursData.TryGetValue(modKey, out string? json);
+
+                        OfflineHours data;
+                        try
+                        {
+                            if (string.IsNullOrEmpty(json)) data = new OfflineHours();
+                            else data = JsonConvert.DeserializeObject<OfflineHours>(json) ?? new OfflineHours();
+                        } catch (Exception ex)
+                        {
+                            api.Logger.Error($"[NoOfflineFoodSpoil] Failed to deserialize offline hours for player. Resetting to 0. Error: {ex.Message}");
+                            data = new OfflineHours();
+                        }
+
+                        double currentTotalOfflineHours = data.TotalOfflineHours;
+                        if (data.LastLogoutTimestamp > 0)
+                        {
+                            currentTotalOfflineHours += Math.Max(0, castedAPI.World.Calendar.TotalHours - data.LastLogoutTimestamp);
+                        }
+
+                        double offlineHoursGap = currentTotalOfflineHours - LastKnownOwnerOfflineHours;
+                        if (offlineHoursGap > 0)
+                        {
+                            ApplyForgiveness(container.Inventory, offlineHoursGap);
+                            api.Logger.Notification($"[OfflinePreserve] Rewound spoilage by {offlineHoursGap} hours for {container.Block.Code}");
+                        }
+
+                        LastKnownOwnerOfflineHours = currentTotalOfflineHours;
+                        b.MarkDirty(true);
+                    }
+                }
+            }
+
+            public override void OnBlockRemoved()
+            {
+                base.OnBlockRemoved();
+                if (Blockentity is BlockEntityContainer container)
+                {
+                    container.Inventory.OnAcquireTransitionSpeed -= OnAcquireTransitionSpeed;
+                }
+            }
+
+            // Helper functions
+            private float OnAcquireTransitionSpeed(EnumTransitionType transType, ItemStack stack, float baseMul)
+            {
+                if (OwnerUID == null || Api?.World?.AllOnlinePlayers == null) return baseMul;
+
+                var owner = Api.World.AllOnlinePlayers.FirstOrDefault(p => p?.PlayerUID == OwnerUID);
+                if (owner == null) return 0f;
+
+                if (Api.Side == EnumAppSide.Server)
+                {
+                    var serverPlayer = owner as IServerPlayer;
+                    if (serverPlayer != null && serverPlayer.ConnectionState != EnumClientState.Playing)
+                    {
+                        return 0f;
+                    }
+                }
+
+                return baseMul;
+            }
+
+            private void ApplyForgiveness(IInventory inventory, double hoursToRewind)
+            {
+
+                foreach (var slot in inventory)
+                {
+                    if (slot.Empty) continue;
+
+                    ITreeAttribute? attr = slot.Itemstack.Attributes.GetTreeAttribute("transitionableDictionary");
+                    if (attr == null) continue;
+
+                    foreach (var val in attr)
+                    {
+                        if (val.Value is ITreeAttribute transProps)
+                        {
+                            double lastUpdated = transProps.GetDouble("lastUpdated");
+                            double currentTime = Api.World.Calendar.TotalHours;
+                            double newLastUpdated = Math.Min(currentTime, lastUpdated + hoursToRewind);
+                            transProps.SetDouble("lastUpdated", newLastUpdated);
+
+                            slot.MarkDirty();
+                        }
+                    }
                 }
             }
         }
