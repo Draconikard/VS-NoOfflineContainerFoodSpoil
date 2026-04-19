@@ -22,6 +22,6 @@ If a player interacts with this container, the food in it will act like the owne
 ---
 
 ### Credit
-This was not my idea. I knew this was a problem and was looking for a solution, and credit for this idea goes fully to [Tabulius](https://www.vintagestory.at/profile/347446-tabulius/)! The post I found their idea on is [here](https://www.vintagestory.at/forums/topic/18000-mod-request-solution-to-offline-food-perishing-in-multiplayer/).
+This was not my idea. I knew this was a problem and was looking for a solution, and credit for this idea goes fully to [Tabulius](https://www.vintagestory.at/profile/347446-tabulius/). The post I found their idea on is [here](https://www.vintagestory.at/forums/topic/18000-mod-request-solution-to-offline-food-perishing-in-multiplayer/).
 
 Releases for this can be found on Vintage Story's [Mod Portal](https://mods.vintagestory.at/noofflinecontainerfoodspoil).
