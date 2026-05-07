@@ -395,7 +395,7 @@ namespace NoOfflineContainerFoodSpoil
                 {
                     if (slot.Empty) continue;
 
-                    ITreeAttribute? attr = slot.Itemstack.Attributes.GetTreeAttribute("transitionstate");
+                    ITreeAttribute? attr = slot.Itemstack.Attributes.GetTreeAttribute("transitionState");
                     if (attr == null) continue;
 
                     double lastUpdated = attr.GetDouble("lastUpdatedTotalHours");
