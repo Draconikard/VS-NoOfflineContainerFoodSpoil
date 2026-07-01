@@ -222,8 +222,6 @@ namespace NoOfflineContainerFoodSpoil
                     container.Inventory.OnInventoryOpened -= OnInventoryOpened;
                     container.Inventory.OnInventoryOpened += OnInventoryOpened;
 
-                    api.Logger.Notification($"Initialize has been called on {container.Block.Code}");
-
                     if (api.Side == EnumAppSide.Server)
                     {
                         modSys = api.ModLoader.GetModSystem<NoOfflineContainerFoodSpoilModSystem>();
