@@ -393,7 +393,7 @@ namespace NoOfflineContainerFoodSpoil
                 {
                     if (slot.Empty) continue;
 
-                    ITreeAttribute? attr = slot.Itemstack.Attributes.GetTreeAttribute("transitionState");
+                    ITreeAttribute? attr = slot.Itemstack.Attributes.GetTreeAttribute("transitionstate");
                     if (attr == null) continue;
 
                     double lastUpdated = attr.GetDouble("lastUpdatedTotalHours");
@@ -410,7 +410,7 @@ namespace NoOfflineContainerFoodSpoil
                             attr.SetDouble("createdTotalHours", Math.Min(Api.World.Calendar.TotalHours, created + hoursToRewind));
                         }
 
-                        slot.Itemstack.TempAttributes.RemoveAttribute("transitionState");
+                        slot.Itemstack.TempAttributes.RemoveAttribute("transitionstate");
                         slot.MarkDirty();
                     }
                 }

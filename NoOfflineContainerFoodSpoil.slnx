@@ -1,4 +1,4 @@
 <Solution>
-  <Project Path="FoodPerishStorageTag/NoOfflineContainerFoodSpoil.csproj" />
+  <Project Path="NoOfflineContainerFoodSpoil/NoOfflineContainerFoodSpoil.csproj" />
   <Project Path="ZZCakeBuild/CakeBuild.csproj" />
 </Solution>
